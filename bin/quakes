@@ -1,0 +1,112 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+Process.setproctitle('quakes')
+
+$LOAD_PATH.unshift File.join(__dir__, '../lib')
+require 'quakes'
+
+# in real life I would probaly use require 'optparse'..
+# but lets keep dependencies list minimal for now.
+
+USAGE = <<~STR
+  Usage: #{$PROGRAM_NAME} [options...] <command>
+
+  Commands:
+    --top<N>    Print a list of the top <N> US states by number of earthquakes
+                example: $ #{$PROGRAM_NAME} --top5
+    --<state>   Print a list of the top 25 strongest earthquakes in <state>
+                example: $ #{$PROGRAM_NAME} --california
+    --help      Print this message
+                example: $ #{$PROGRAM_NAME} --help
+    --version   Print program version
+                example: $ #{$PROGRAM_NAME} --version
+
+  Options:
+                By default all results are sorted as 'highest to lowest' (desc) and
+                remote dataset is used for analysis.
+                You can change that behaviour by the following switches:
+
+    --asc       Changes order of results to 'lowest to highest' (asc)
+                example: $ #{$PROGRAM_NAME} --asc --top5
+    --f <path>  Use local dataset source available at <path> for analysis
+                example: $ #{$PROGRAM_NAME} --f data/all_month.geojson --top5
+    --net <url> DEFAULT: Download and analyze the most recent dataset from <url>
+                example: $ #{$PROGRAM_NAME} --net https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_month.geojson --top5
+STR
+
+def print_error_and_exit(msg)
+  STDERR.puts msg
+  STDERR.puts
+  STDERR.puts USAGE
+  exit 1
+end
+
+print_error_and_exit 'missed required arguments' if ARGV.empty?
+
+options = {}
+use_next_argv_flag = false
+
+ARGV.each do |opt|
+  case opt
+  when '--version'
+    puts Quakes::VERSION
+    exit
+  when '--help'
+    puts USAGE
+    exit
+  when '--asc'
+    options[:asc] = true
+  when '--f'
+    print_error_and_exit 'only one source allowed' if options[:remote]
+
+    options[:local] = true
+    use_next_argv_flag = true
+  when '--net'
+    print_error_and_exit 'only one source allowed' if options[:local]
+
+    options[:remote] = true
+    use_next_argv_flag = true
+  when '--debug'
+    options[:debug] = true
+  when /\A--top(\d+)\z/
+    print_error_and_exit 'only one command allowed' if options[:command]
+
+    options[:command] = :top_by_occurrence
+    options[:argv] = $1.to_i
+  when /\A--([a-zA-Z]{2,})\z/
+    print_error_and_exit 'only one command allowed' if options[:command]
+
+    options[:command] = :top_by_state
+    options[:argv] = $1.downcase
+  else
+    print_error_and_exit "unknown option: #{opt}" unless use_next_argv_flag
+
+    use_next_argv_flag = false
+
+    if options[:local]
+      options[:filepath] = opt
+      next
+    end
+
+    if options[:remote]
+     options[:url] = opt
+     next
+    end
+  end
+end
+
+unless options[:command] || options[:argv]
+  print_error_and_exit 'missed required command'
+end
+
+if (options[:local] && !options[:filepath]) || (options[:remote] && !options[:url])
+  print_error_and_exit 'missed source argument'
+end
+
+begin
+  Quakes.run! options
+rescue Quakes::Error => exc
+  print_error_and_exit exc.message
+end
+
